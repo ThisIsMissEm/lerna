@@ -1,0 +1,19 @@
+{
+  "id": "test@1.10.100",
+  "name": "test",
+  "version": "1.10.100",
+  "size": 0,
+  "unpackedSize": 0,
+  "shasum": "16c6d9f4104f0cde0c2fb571bafc594f970da877",
+  "integrity": "sha512-50HXBTMk514AZCCMRUnaJQefHXJF1jOpfJew0fMy/r+t0XK97XMTHoUxdRNE3ARBjrLzwlghr/PFbLQqXVUuEw==",
+  "filename": null,
+  "files": [
+    {
+      "path": "package.json",
+      "size": 0,
+      "mode": 420
+    }
+  ],
+  "entryCount": 1,
+  "bundled": []
+}

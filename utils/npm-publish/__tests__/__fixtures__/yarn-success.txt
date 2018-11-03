@@ -1,0 +1,7 @@
+{"type":"step","data":{"message":"Bumping version","current":1,"total":4}}
+{"type":"info","data":"Current version: 1.0.2"}
+{"type":"step","data":{"message":"Logging in","current":2,"total":4}}
+{"type":"step","data":{"message":"Publishing","current":3,"total":4}}
+{"type":"success","data":"Published."}
+{"type":"step","data":{"message":"Revoking token","current":4,"total":4}}
+{"type":"info","data":"Not revoking login token, specified via config file."}

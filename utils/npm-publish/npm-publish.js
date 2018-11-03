@@ -10,16 +10,27 @@ const getExecOpts = require("@lerna/get-npm-exec-opts");
 const hasNpmVersion = require("@lerna/has-npm-version");
 const logPacked = require("@lerna/log-packed");
 
+class PublishError extends Error {
+  constructor(reason, message, ...rest) {
+    super(message);
+    this.name = "PublishError";
+    this.reason = reason;
+    log.resume(); // might be paused, noop otherwise
+    log.error(message, ...rest);
+  }
+}
+
 module.exports = npmPublish;
 module.exports.npmPack = npmPack;
 module.exports.makePacker = makePacker;
+module.exports.PublishError = PublishError;
 
 function npmPublish(pkg, tag, { npmClient, registry, otp }) {
   log.verbose("publish", pkg.name);
 
   const distTag = tag && tag.trim();
   const opts = getExecOpts(pkg, registry);
-  const args = ["publish", "--ignore-scripts"];
+  const args = ["publish", "--ignore-scripts", "--json"];
 
   if (distTag) {
     args.push("--tag", distTag);
@@ -41,10 +52,49 @@ function npmPublish(pkg, tag, { npmClient, registry, otp }) {
   args.push(pkg.tarball.filename);
 
   log.silly("exec", npmClient, args);
-  return ChildProcessUtilities.exec(npmClient, args, opts).then(() =>
-    // don't leave the generated tarball hanging around after success
-    fs.remove(path.join(pkg.location, pkg.tarball.filename)).then(() => pkg)
-  );
+  return ChildProcessUtilities.exec(npmClient, args, opts).then(result => {
+    if (npmClient === "npm") {
+      let response;
+      try {
+        response = JSON.parse(result.stdout);
+      } catch (err) {
+        throw new PublishError("unknown", err.message, result.stdout);
+      }
+
+      if (response.error) {
+        if (
+          response.error.code === "EOTP" ||
+          (response.error.code === "E401" && /one-time pass/.test(response.error.summary))
+        ) {
+          throw new PublishError("EOTP", response.error.summary, response.error);
+        } else {
+          throw new PublishError("unknown", response.error.summary, response.error);
+        }
+      }
+    } else if (npmClient === "yarn") {
+      let response;
+
+      try {
+        response = result.stdout
+          .trim()
+          .split("\n")
+          .map(line => JSON.parse(line))
+          .find(({ type }) => type === "success" || type === "error");
+      } catch (err) {
+        throw new PublishError("unknown", err.message, result.stdout);
+      }
+
+      if (response.type === "error") {
+        if (/one-time pass/.test(response.data)) {
+          throw new PublishError("EOTP", response.data);
+        } else {
+          throw new PublishError("unknown", response.data);
+        }
+      }
+    }
+
+    return pkg;
+  });
 }
 
 function makePackOptions(rootManifest) {

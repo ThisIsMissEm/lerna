@@ -19,10 +19,9 @@ const Package = require("@lerna/package");
 // file under test
 const npmPublish = require("..");
 
-describe("npm-publish", () => {
-  fs.remove.mockResolvedValue();
-  ChildProcessUtilities.exec.mockResolvedValue();
+const fixtures = require("./__fixtures__/index.js");
 
+describe("npm-publish", () => {
   const rootPath = path.normalize("/test");
   const pkg = new Package(
     { name: "test", version: "1.10.100" },
@@ -35,84 +34,113 @@ describe("npm-publish", () => {
     filename: "test-1.10.100.tgz",
   };
 
-  it("runs npm publish in a directory with --tag support", async () => {
-    const result = await npmPublish(pkg, "published-tag", { npmClient: "npm" });
+  describe("with npmClient npm", () => {
+    beforeEach(() => {
+      ChildProcessUtilities.exec.mockResolvedValue({
+        stdout: fixtures.npm.success,
+      });
+    });
 
-    expect(result).toBe(pkg);
-    expect(ChildProcessUtilities.exec).lastCalledWith(
-      "npm",
-      ["publish", "--ignore-scripts", "--tag", "published-tag", "test-1.10.100.tgz"],
-      {
-        cwd: pkg.location,
-        env: {},
-        pkg,
-      }
-    );
-    expect(fs.remove).lastCalledWith(path.join(pkg.location, pkg.tarball.filename));
-  });
+    it("runs npm publish in a directory with --tag support", async () => {
+      const result = await npmPublish(pkg, "published-tag", { npmClient: "npm" });
 
-  it("does not pass --tag when none present (npm default)", async () => {
-    await npmPublish(pkg, undefined, { npmClient: "npm" });
+      expect(result).toBe(pkg);
+      expect(ChildProcessUtilities.exec).lastCalledWith(
+        "npm",
+        ["publish", "--ignore-scripts", "--json", "--tag", "published-tag", "test-1.10.100.tgz"],
+        {
+          cwd: pkg.location,
+          env: {},
+          pkg,
+        }
+      );
+    });
 
-    expect(ChildProcessUtilities.exec).lastCalledWith(
-      "npm",
-      ["publish", "--ignore-scripts", "test-1.10.100.tgz"],
-      {
-        cwd: pkg.location,
-        env: {},
-        pkg,
-      }
-    );
-  });
+    it("does not pass --tag when none present (npm default)", async () => {
+      await npmPublish(pkg, undefined, { npmClient: "npm" });
 
-  it("trims trailing whitespace in tag parameter", async () => {
-    await npmPublish(pkg, "trailing-tag ", { npmClient: "npm" });
+      expect(ChildProcessUtilities.exec).lastCalledWith(
+        "npm",
+        ["publish", "--ignore-scripts", "--json", "test-1.10.100.tgz"],
+        {
+          cwd: pkg.location,
+          env: {},
+          pkg,
+        }
+      );
+    });
 
-    expect(ChildProcessUtilities.exec).lastCalledWith(
-      "npm",
-      ["publish", "--ignore-scripts", "--tag", "trailing-tag", "test-1.10.100.tgz"],
-      {
-        cwd: pkg.location,
-        env: {},
-        pkg,
-      }
-    );
-  });
+    it("trims trailing whitespace in tag parameter", async () => {
+      await npmPublish(pkg, "trailing-tag ", { npmClient: "npm" });
 
-  it("supports custom registry", async () => {
-    const registry = "https://custom-registry/npmPublish";
+      expect(ChildProcessUtilities.exec).lastCalledWith(
+        "npm",
+        ["publish", "--ignore-scripts", "--json", "--tag", "trailing-tag", "test-1.10.100.tgz"],
+        {
+          cwd: pkg.location,
+          env: {},
+          pkg,
+        }
+      );
+    });
 
-    await npmPublish(pkg, "custom-registry", { npmClient: "npm", registry });
+    it("supports custom registry", async () => {
+      const registry = "https://custom-registry/npmPublish";
 
-    expect(ChildProcessUtilities.exec).lastCalledWith(
-      "npm",
-      ["publish", "--ignore-scripts", "--tag", "custom-registry", "test-1.10.100.tgz"],
-      {
-        cwd: pkg.location,
-        env: {
-          npm_config_registry: registry,
-        },
-        pkg,
-      }
-    );
-  });
+      await npmPublish(pkg, "custom-registry", { npmClient: "npm", registry });
 
-  it("supports passing in a OTP Code", async () => {
-    await npmPublish(pkg, undefined, { npmClient: "npm", otp: "123456" });
+      expect(ChildProcessUtilities.exec).lastCalledWith(
+        "npm",
+        ["publish", "--ignore-scripts", "--json", "--tag", "custom-registry", "test-1.10.100.tgz"],
+        {
+          cwd: pkg.location,
+          env: {
+            npm_config_registry: registry,
+          },
+          pkg,
+        }
+      );
+    });
 
-    expect(ChildProcessUtilities.exec).lastCalledWith(
-      "npm",
-      ["publish", "--ignore-scripts", "--otp", "123456", "test-1.10.100.tgz"],
-      {
-        cwd: pkg.location,
-        env: {},
-        pkg,
-      }
-    );
+    describe("Supports OTP / 2FA", async () => {
+      it("handles valid code", async () => {
+        ChildProcessUtilities.exec.mockResolvedValue({
+          stdout: fixtures.npm.success,
+        });
+
+        expect.assertions(2);
+
+        const result = await npmPublish(pkg, undefined, { npmClient: "npm", otp: "123456" });
+
+        expect(result).toBe(pkg);
+        expect(ChildProcessUtilities.exec).toHaveBeenCalled();
+      });
+
+      it("handles invalid code", async () => {
+        ChildProcessUtilities.exec.mockResolvedValue({
+          stdout: fixtures.npm.tfa,
+        });
+
+        expect.assertions(3);
+
+        try {
+          await npmPublish(pkg, undefined, { npmClient: "npm", otp: "123456" });
+        } catch (err) {
+          expect(ChildProcessUtilities.exec).toHaveBeenCalled();
+
+          expect(err).toBeInstanceOf(npmPublish.PublishError);
+          expect(err.reason).toBe("EOTP");
+        }
+      });
+    });
   });
 
   describe("with npmClient yarn", () => {
     it("appends --new-version to avoid interactive prompt", async () => {
+      ChildProcessUtilities.exec.mockResolvedValue({
+        stdout: fixtures.yarn.success,
+      });
+
       await npmPublish(pkg, "yarn-publish", { npmClient: "yarn" });
 
       expect(ChildProcessUtilities.exec).lastCalledWith(
@@ -120,6 +148,7 @@ describe("npm-publish", () => {
         [
           "publish",
           "--ignore-scripts",
+          "--json",
           "--tag",
           "yarn-publish",
           "--new-version",
@@ -134,6 +163,38 @@ describe("npm-publish", () => {
           pkg,
         }
       );
+    });
+
+    describe("Supports OTP / 2FA", async () => {
+      it("handles valid code", async () => {
+        ChildProcessUtilities.exec.mockResolvedValue({
+          stdout: fixtures.yarn.success,
+        });
+
+        expect.assertions(2);
+
+        const result = await npmPublish(pkg, undefined, { npmClient: "yarn", otp: "123456" });
+
+        expect(result).toBe(pkg);
+        expect(ChildProcessUtilities.exec).toHaveBeenCalled();
+      });
+
+      it("handles invalid code", async () => {
+        ChildProcessUtilities.exec.mockResolvedValue({
+          stdout: fixtures.yarn.tfa,
+        });
+
+        expect.assertions(3);
+
+        try {
+          await npmPublish(pkg, undefined, { npmClient: "yarn", otp: "123456" });
+        } catch (err) {
+          expect(ChildProcessUtilities.exec).toHaveBeenCalled();
+
+          expect(err).toBeInstanceOf(npmPublish.PublishError);
+          expect(err.reason).toBe("EOTP");
+        }
+      });
     });
   });
 });

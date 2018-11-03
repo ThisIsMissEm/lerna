@@ -1,5 +1,6 @@
 "use strict";
 
+const fs = require("fs-extra");
 const os = require("os");
 const path = require("path");
 const pFinally = require("p-finally");
@@ -499,21 +500,21 @@ class PublishCommand extends Command {
     return pFinally(chain, () => tracker.finish());
   }
 
-  // We need to pass in the pkg here as to return it for `actions` in publishPackage:
-  //
-  // getOtpCode(pkg) {
-  //   if this.conf.get(tfaMode) !== 'auth-and-writes'
-  //     resolve(pkg);
-  //
-  //   get last prompt time
-  //   if now - last prompt time < 30s
-  //     resolve(pkg)
-  //   else
-  //     prompt for otp
-  //     this.npmConfig.otp = otp
-  //     set last prompt time to now
-  //     resolve(pkg)
-  // }
+  getTfaCode() {
+    if (this.conf.get("tfaMode") !== "auth-and-writes") {
+      return Promise.resolve();
+    }
+
+    //   get last prompt time
+    //   if now - last prompt time < 30s
+    //     resolve(pkg)
+    //   else
+    //     prompt for otp
+    //     this.npmConfig.otp = otp
+    //     set last prompt time to now
+    //     resolve(pkg)
+    return Promise.resolve();
+  }
 
   publishPacked() {
     // if we skip temp tags we should tag with the proper value immediately
@@ -523,8 +524,9 @@ class PublishCommand extends Command {
     tracker.addWork(this.packagesToPublish.length);
 
     const actions = [
-      // TODO: Add this.getOtpCode(pkg)
       pkg => npmPublish(pkg, distTag, this.npmConfig),
+      // don't leave the generated tarball hanging around after success
+      pkg => fs.remove(path.join(pkg.location, pkg.tarball.filename)).then(() => pkg),
       // postpublish is _not_ run when publishing a tarball
       pkg => this.runPackageLifecycle(pkg, "postpublish"),
     ];
@@ -544,9 +546,10 @@ class PublishCommand extends Command {
 
     let chain = Promise.resolve();
 
-    // TODO: Add this.getOtpCode(pkg) to chain; This prevents an initial otp prompt
-
-    chain = chain.then(() => runParallelBatches(this.batchedPackages, this.concurrency, mapper));
+    chain = chain.then(() =>
+      // Per batch we request a TFA Code, even if TFA isn't required (it's just a Promise.resolve()):
+      runParallelBatches(this.batchedPackages, this.concurrency, mapper)
+    );
 
     chain = chain.then(() => this.runPackageLifecycle(this.project.manifest, "postpublish"));
 
