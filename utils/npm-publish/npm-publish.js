@@ -14,7 +14,7 @@ module.exports = npmPublish;
 module.exports.npmPack = npmPack;
 module.exports.makePacker = makePacker;
 
-function npmPublish(pkg, tag, { npmClient, registry }) {
+function npmPublish(pkg, tag, { npmClient, registry, otp }) {
   log.verbose("publish", pkg.name);
 
   const distTag = tag && tag.trim();
@@ -30,6 +30,11 @@ function npmPublish(pkg, tag, { npmClient, registry }) {
     // https://yarnpkg.com/en/docs/cli/publish#toc-yarn-publish-new-version
     args.push("--new-version", pkg.version, "--non-interactive", "--no-git-tag-version");
     // yarn also needs to be told to stop creating git tags: https://git.io/fAr1P
+  }
+
+  // Add the OTP if we have one:
+  if (otp) {
+    args.push("--otp", otp);
   }
 
   // always add tarball file, created by npmPack()

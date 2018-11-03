@@ -97,6 +97,20 @@ describe("npm-publish", () => {
     );
   });
 
+  it("supports passing in a OTP Code", async () => {
+    await npmPublish(pkg, undefined, { npmClient: "npm", otp: "123456" });
+
+    expect(ChildProcessUtilities.exec).lastCalledWith(
+      "npm",
+      ["publish", "--ignore-scripts", "--otp", "123456", "test-1.10.100.tgz"],
+      {
+        cwd: pkg.location,
+        env: {},
+        pkg,
+      }
+    );
+  });
+
   describe("with npmClient yarn", () => {
     it("appends --new-version to avoid interactive prompt", async () => {
       await npmPublish(pkg, "yarn-publish", { npmClient: "yarn" });
