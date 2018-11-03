@@ -5,6 +5,14 @@ const pMapSeries = require("p-map-series");
 
 module.exports = runParallelBatches;
 
-function runParallelBatches(batches, concurrency, mapper) {
-  return pMapSeries(batches, batch => pMap(batch, mapper, { concurrency }));
+function runParallelBatches(batches, concurrency, mapper, perBatch) {
+  return pMapSeries(batches, batch => {
+    let chain = Promise.resolve();
+
+    if (typeof perBatch === 'function') {
+      chain = chain.then(perBatch(batch));
+    }
+
+    return chain.then(() => pMap(batch, mapper, { concurrency }));
+  });
 }
