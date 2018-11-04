@@ -4,6 +4,7 @@ const os = require("os");
 const path = require("path");
 const pFinally = require("p-finally");
 const pMap = require("p-map");
+const pMapSeries = require("p-map-series");
 const pPipe = require("p-pipe");
 const pReduce = require("p-reduce");
 const semver = require("semver");
@@ -33,6 +34,9 @@ const removeTempLicenses = require("./lib/remove-temp-licenses");
 const verifyNpmPackageAccess = require("./lib/verify-npm-package-access");
 const getTwoFactorAuthRequired = require("./lib/get-two-factor-auth-required");
 const promptOneTimePassword = require("./lib/prompt-one-time-password");
+
+// One Time Passwords timeout after 30s:
+const OTP_TIMEOUT = 30 * 1000;
 
 module.exports = factory;
 
@@ -452,11 +456,16 @@ class PublishCommand extends Command {
   }
 
   requestOneTimePassword() {
-    return Promise.resolve()
-      .then(() => promptOneTimePassword())
-      .then(otp => {
-        this.npmConfig.otp = otp;
-      });
+    if (!this.lastOtpRequest || Date.now() - this.lastOtpRequest > OTP_TIMEOUT) {
+      return Promise.resolve()
+        .then(() => promptOneTimePassword())
+        .then(otp => {
+          this.npmConfig.otp = otp;
+          this.lastOtpRequest = Date.now();
+        });
+    }
+
+    return Promise.resolve();
   }
 
   packUpdated() {
@@ -513,40 +522,61 @@ class PublishCommand extends Command {
   publishPacked() {
     // if we skip temp tags we should tag with the proper value immediately
     const distTag = this.options.tempTag ? "lerna-temp" : this.getDistTag();
-    const tracker = this.logger.newItem(`${this.npmConfig.npmClient} publish`);
+    const tracker = this.logger.newItem(`${this.npmConfig.npmClient} publish`, this.packagesToPublish.length);
 
-    tracker.addWork(this.packagesToPublish.length);
+    const otpRequestLimiter = pLimit(1);
+
+    // Only perform one OTP request at a time, especially this will block on the first one needing user input
+    const performPublish = pkg =>
+      Promise.resolve()
+        .then(() => otpRequestLimiter(this.requestOneTimePassword))
+        .then(() => npmPublish(pkg, distTag, this.npmConfig))
+        .then(() => this.runPackageLifecycle(pkg, "postpublish"));
 
     let chain = Promise.resolve();
 
+    // Do an initial OTP Request, priming the OTP:
     if (this.twoFactorAuthRequired) {
       chain = chain.then(() => this.requestOneTimePassword());
     }
 
-    const actions = [
-      pkg => npmPublish(pkg, distTag, this.npmConfig),
-      // postpublish is _not_ run when publishing a tarball
-      pkg => this.runPackageLifecycle(pkg, "postpublish"),
-    ];
+    chain = chain.then(() => {
+      return pMapSeries(this.batchedPackages, batch => {
+        return pMap(batch, mapper, { concurrency })
+      })
+    })
 
-    if (this.options.requireScripts) {
-      actions.push(pkg => this.execScript(pkg, "postpublish"));
-    }
 
-    actions.push(pkg => {
-      tracker.info("published", pkg.name, pkg.version);
-      tracker.completeWork(1);
+    // const actions = [
+    //   pkg => npmPublish(pkg, distTag, this.npmConfig),
+    //   // postpublish is _not_ run when publishing a tarball
+    //   pkg => this.runPackageLifecycle(pkg, "postpublish"),
+    // ];
 
-      return pkg;
-    });
+    // if (this.options.requireScripts) {
+    //   actions.push(pkg => this.execScript(pkg, "postpublish"));
+    // }
 
-    const mapper = pPipe(actions);
+    // actions.push(pkg => {
+    //   tracker.info("published", pkg.name, pkg.version);
+    //   tracker.completeWork(1);
 
-    chain = chain.then(() => runParallelBatches(this.batchedPackages, this.concurrency, mapper));
+    //   return pkg;
+    // });
+
+    // const mapper = pPipe(actions);
+
+    // chain = chain.then(() => runParallelBatches(this.batchedPackages, this.concurrency, mapper));
 
     chain = chain.then(() => this.runPackageLifecycle(this.project.manifest, "postpublish"));
 
     return pFinally(chain, () => tracker.finish());
+  }
+
+  publishPackage(pkg, distTag, tracker) {
+    let chain = Promise.resolve();
+
+    chain = chain.then(() => npmPublish(pkg, distTag, this.npmConfig))
   }
 
   npmUpdateAsLatest() {
